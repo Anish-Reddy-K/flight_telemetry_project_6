@@ -1,8 +1,7 @@
 import socket
 import time
 
-# Replace this with the Mac mini's IP address found earlier
-SERVER_IP = "10.0.0.111"
+SERVER_IP = "10.0.0.111" # Replace this with the Mac mini's / servers IP address
 SERVER_PORT = 8888
 
 def main():
@@ -33,3 +32,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# Ask Prof
+# UID
+# UUID (or) Random number, how important is repeated flight simulation
