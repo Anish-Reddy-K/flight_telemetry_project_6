@@ -1,7 +1,7 @@
 import socket
 import time
 
-SERVER_IP = "10.0.0.111" # Replace this with the Mac mini's / servers IP address
+SERVER_IP = "0.0.0.0" # Replace this with the Mac mini's / servers IP address
 SERVER_PORT = 8888
 
 def main():
