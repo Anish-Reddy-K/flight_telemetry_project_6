@@ -2,6 +2,7 @@ import socket
 import threading
 import json
 import sqlite3
+import time
 from datetime import datetime
 
 # Server configuration
@@ -48,10 +49,11 @@ def process_client(conn, addr):
     uid = None
     start_time = None
 
-    while True:
-        try:
+    try:
+        while True:
             data = conn.recv(1024)
             if not data:
+                # No more data from client (connection closed)
                 break
             buffer += data.decode()
             # Process complete lines separated by newline
@@ -93,13 +95,20 @@ def process_client(conn, addr):
                         final_avg = 0.0
                     print(f"Flight {uid} ended at {end_time}. Final average fuel: {final_avg:.2f}")
                     save_flight_record(uid, start_time, end_time, final_avg, record["count"] if record else 0)
-                else:
-                    print("Received unknown message type.")
-        except ConnectionResetError:
-            break
-
-    conn.close()
-    print(f"Connection from {addr} closed")
+    except ConnectionResetError:
+        print(f"ConnectionResetError from {addr}")
+    finally:
+        # If the connection closes without an "end" message, finalize the flight
+        if uid is not None:
+            with flights_lock:
+                record = flights.pop(uid, None)
+            if record:
+                final_avg = record["fuel_sum"] / record["count"] if record["count"] > 0 else 0.0
+                end_time = time.strftime("%H:%M:%S")
+                print(f"Connection for flight {uid} closed unexpectedly at {end_time}. Final average fuel: {final_avg:.2f}")
+                save_flight_record(uid, record["start_time"], end_time, final_avg, record["count"])
+        conn.close()
+        print(f"Connection from {addr} closed")
 
 def start_server():
     """Initialize database and start the server to accept incoming client connections."""
