@@ -2,10 +2,11 @@ import socket
 import threading
 import json
 import sqlite3
+from datetime import datetime
 
 # Server configuration
 SERVER_IP = '0.0.0.0'
-SERVER_PORT = 5000
+SERVER_PORT = 8000
 DB_FILE = 'flights.db'
 
 # Dictionary to hold live flight data: {uid: {"start_time": ..., "fuel_sum": ..., "count": ...}}
