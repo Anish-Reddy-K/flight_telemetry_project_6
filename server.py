@@ -5,17 +5,17 @@ import sqlite3
 import time
 from datetime import datetime
 
-# Server configuration
+# server configuration
 SERVER_IP = '0.0.0.0'
 SERVER_PORT = 8000
 DB_FILE = 'flights.db'
 
-# Dictionary to hold live flight data: {uid: {"start_time": ..., "fuel_sum": ..., "count": ...}}
+# dictionary to hold live flight data: {uid: {"start_time": ..., "fuel_sum": ..., "count": ...}}
 flights = {}
 flights_lock = threading.Lock()
 
+# init SQLite database and create table if it doesn't exist
 def init_db():
-    """Initialize the SQLite database and create the flights table if it doesn't exist."""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute('''
@@ -31,7 +31,6 @@ def init_db():
     conn.close()
 
 def save_flight_record(uid, start_time, end_time, final_avg, count):
-    """Save the completed flight record into the database."""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute('''
@@ -43,7 +42,6 @@ def save_flight_record(uid, start_time, end_time, final_avg, count):
     print(f"Saved flight record for UID {uid}")
 
 def process_client(conn, addr):
-    """Handle client connection and process messages."""
     print(f"New connection from {addr}")
     buffer = ""
     uid = None
@@ -53,10 +51,10 @@ def process_client(conn, addr):
         while True:
             data = conn.recv(1024)
             if not data:
-                # No more data from client (connection closed)
+                # no more data from client (connection closed)
                 break
             buffer += data.decode()
-            # Process complete lines separated by newline
+            # process complete lines separated by newline
             while "\n" in buffer:
                 line, buffer = buffer.split("\n", 1)
                 if not line.strip():
@@ -98,7 +96,7 @@ def process_client(conn, addr):
     except ConnectionResetError:
         print(f"ConnectionResetError from {addr}")
     finally:
-        # If the connection closes without an "end" message, finalize the flight
+        # if the connection closes without an "end" message, finalize the flight
         if uid is not None:
             with flights_lock:
                 record = flights.pop(uid, None)
@@ -111,7 +109,6 @@ def process_client(conn, addr):
         print(f"Connection from {addr} closed")
 
 def start_server():
-    """Initialize database and start the server to accept incoming client connections."""
     init_db()
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.bind((SERVER_IP, SERVER_PORT))
