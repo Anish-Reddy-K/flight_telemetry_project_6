@@ -3,18 +3,20 @@ import threading
 import json
 import sqlite3
 import time
+import os
 from datetime import datetime
+import psutil
 
-# server configuration
+# Server configuration
 SERVER_IP = '0.0.0.0'
 SERVER_PORT = 8000
 DB_FILE = 'flights.db'
 
-# dictionary to hold live flight data: {uid: {"start_time": ..., "fuel_sum": ..., "count": ...}}
+# Dictionary to hold live flight data: {uid: {...}}
 flights = {}
 flights_lock = threading.Lock()
 
-# init SQLite database and create table if it doesn't exist
+# Initialize SQLite database
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -51,10 +53,8 @@ def process_client(conn, addr):
         while True:
             data = conn.recv(1024)
             if not data:
-                # no more data from client (connection closed)
                 break
             buffer += data.decode()
-            # process complete lines separated by newline
             while "\n" in buffer:
                 line, buffer = buffer.split("\n", 1)
                 if not line.strip():
@@ -96,7 +96,6 @@ def process_client(conn, addr):
     except ConnectionResetError:
         print(f"ConnectionResetError from {addr}")
     finally:
-        # if the connection closes without an "end" message, finalize the flight
         if uid is not None:
             with flights_lock:
                 record = flights.pop(uid, None)
@@ -108,13 +107,25 @@ def process_client(conn, addr):
         conn.close()
         print(f"Connection from {addr} closed")
 
+# 🔍 Performance monitoring with psutil
+def monitor_performance(interval=1):
+    process = psutil.Process(os.getpid())
+    while True:
+        cpu = process.cpu_percent()
+        mem = process.memory_info().rss / 1024 ** 2
+        print(f"[PERF] CPU: {cpu:.2f}% | RAM: {mem:.2f} MB")
+        time.sleep(interval)
+
 def start_server():
     init_db()
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.bind((SERVER_IP, SERVER_PORT))
     server.listen(5)
     print(f"Server listening on {SERVER_IP}:{SERVER_PORT}")
-    
+
+    # Start performance monitor in a background thread
+    threading.Thread(target=monitor_performance, daemon=True).start()
+
     while True:
         conn, addr = server.accept()
         client_thread = threading.Thread(target=process_client, args=(conn, addr))

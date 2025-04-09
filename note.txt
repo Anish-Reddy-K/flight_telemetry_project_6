@@ -1,0 +1,17 @@
+- cProfile
+python -m cProfile -o program.prof server.py
+pip install snakeviz
+snakeviz program.prof
+
+- py-spy
+pip install py-spy
+py-spy record -o profile.svg -- python serer.py
+
+----
+line_profiler
+memory_profiler
+Scalene
+
+potential changes:
+- TCP to UDP
+- change to async operations
