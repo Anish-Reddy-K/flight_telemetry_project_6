@@ -4,6 +4,7 @@ import json
 import sqlite3
 import time
 import os
+import csv
 from datetime import datetime
 import psutil
 
@@ -11,10 +12,15 @@ import psutil
 SERVER_IP = '0.0.0.0'
 SERVER_PORT = 8000
 DB_FILE = 'flights.db'
+LOG_FILE = 'server_performance_initial_crash_2.csv'
 
 # Dictionary to hold live flight data: {uid: {...}}
 flights = {}
 flights_lock = threading.Lock()
+
+# Counter for active client connections
+active_clients = 0
+active_clients_lock = threading.Lock()
 
 # Initialize SQLite database
 def init_db():
@@ -32,6 +38,29 @@ def init_db():
     conn.commit()
     conn.close()
 
+# Initialize CSV log file
+def init_log_file():
+    # Check if file exists to determine if we need to write headers
+    file_exists = os.path.isfile(LOG_FILE)
+    
+    with open(LOG_FILE, 'a', newline='') as csvfile:
+        fieldnames = ['timestamp', 'cpu_percent', 'mem_mb', 'num_threads', 'active_clients']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        
+        if not file_exists:
+            writer.writeheader()
+
+def log_performance(timestamp, cpu_percent, mem_mb, num_threads, active_clients_count):
+    with open(LOG_FILE, 'a', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=['timestamp', 'cpu_percent', 'mem_mb', 'num_threads', 'active_clients'])
+        writer.writerow({
+            'timestamp': timestamp,
+            'cpu_percent': cpu_percent,
+            'mem_mb': mem_mb,
+            'num_threads': num_threads,
+            'active_clients': active_clients_count
+        })
+
 def save_flight_record(uid, start_time, end_time, final_avg, count):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -44,6 +73,10 @@ def save_flight_record(uid, start_time, end_time, final_avg, count):
     print(f"Saved flight record for UID {uid}")
 
 def process_client(conn, addr):
+    global active_clients
+    with active_clients_lock:
+        active_clients += 1
+    
     print(f"New connection from {addr}")
     buffer = ""
     uid = None
@@ -105,19 +138,39 @@ def process_client(conn, addr):
                 print(f"Connection for flight {uid} closed unexpectedly at {end_time}. Final average fuel: {final_avg:.2f}")
                 save_flight_record(uid, record["start_time"], end_time, final_avg, record["count"])
         conn.close()
+        with active_clients_lock:
+            active_clients -= 1
         print(f"Connection from {addr} closed")
 
 # 🔍 Performance monitoring with psutil
 def monitor_performance(interval=1):
     process = psutil.Process(os.getpid())
     while True:
+        # Get current timestamp
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Get CPU and memory usage
         cpu = process.cpu_percent()
         mem = process.memory_info().rss / 1024 ** 2
-        print(f"[PERF] CPU: {cpu:.2f}% | RAM: {mem:.2f} MB")
+        
+        # Get thread count (including main thread and performance monitor thread)
+        num_threads = threading.active_count()
+        
+        # Calculate active clients (num_threads - 2 for main thread and monitor thread)
+        with active_clients_lock:
+            clients_count = active_clients
+        
+        # Print to console
+        print(f"[PERF] CPU: {cpu:.2f}% | RAM: {mem:.2f} MB | Threads: {num_threads} | Active clients: {clients_count}")
+        
+        # Log to CSV
+        log_performance(timestamp, cpu, mem, num_threads, clients_count)
+        
         time.sleep(interval)
 
 def start_server():
     init_db()
+    init_log_file()
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.bind((SERVER_IP, SERVER_PORT))
     server.listen(5)

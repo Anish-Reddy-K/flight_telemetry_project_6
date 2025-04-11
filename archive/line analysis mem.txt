@@ -1,0 +1,136 @@
+Line #    Mem usage    Increment  Occurrences   Line Contents
+=============================================================
+    18     27.2 MiB     27.2 MiB           1   @profile
+    19                                         def main():
+    20                                             # Server configuration
+    21                                             global flights, flights_lock
+    22     27.2 MiB      0.0 MiB           1       SERVER_IP = '0.0.0.0'
+    23     27.2 MiB      0.0 MiB           1       SERVER_PORT = 8000
+    24     27.2 MiB      0.0 MiB           1       DB_FILE = 'flights.db'
+    25
+    26                                             # Dictionary to hold live flight data: {uid: {...}}
+    27     27.2 MiB      0.0 MiB           1       flights = {}
+    28     27.2 MiB      0.0 MiB           1       flights_lock = threading.Lock()
+    29
+    30                                             # Initialize SQLite database
+    31     27.2 MiB      0.0 MiB           2       def init_db():
+    32     27.4 MiB      0.2 MiB           1           conn = sqlite3.connect(DB_FILE)
+    33     27.4 MiB      0.0 MiB           1           c = conn.cursor()
+    34     27.9 MiB      0.5 MiB           1           c.execute('''
+    35                                                     CREATE TABLE IF NOT EXISTS flights (
+    36                                                         uid TEXT PRIMARY KEY,
+    37                                                         start_time TEXT,
+    38                                                         end_time TEXT,
+    39                                                         final_avg_fuel REAL,
+    40                                                         record_count INTEGER
+    41                                                     )
+    42                                                 ''')
+    43     27.9 MiB      0.0 MiB           1           conn.commit()
+    44     27.9 MiB      0.0 MiB           1           conn.close()
+    45
+    46     27.2 MiB      0.0 MiB           1       def save_flight_record(uid, start_time, end_time, final_avg, count):
+    47                                                 conn = sqlite3.connect(DB_FILE)
+    48                                                 c = conn.cursor()
+    49                                                 c.execute('''
+    50                                                     INSERT OR REPLACE INTO flights (uid, start_time, end_time, final_avg_fuel, record_count)
+    51                                                     VALUES (?, ?, ?, ?, ?)
+    52                                                 ''', (uid, start_time, end_time, final_avg, count))
+    53                                                 conn.commit()
+    54                                                 conn.close()
+    55                                                 print(f"Saved flight record for UID {uid}")
+    56
+    57     27.2 MiB      0.0 MiB           1       def process_client(conn, addr):
+    58                                                 print(f"New connection from {addr}")
+    59                                                 buffer = ""
+    60                                                 uid = None
+    61                                                 start_time = None
+    62
+    63                                                 try:
+    64                                                     while True:
+    65                                                         data = conn.recv(1024)
+    66                                                         if not data:
+    67                                                             break
+    68                                                         buffer += data.decode()
+    69                                                         while "\n" in buffer:
+    70                                                             line, buffer = buffer.split("\n", 1)
+    71                                                             if not line.strip():
+    72                                                                 continue
+    73                                                             try:
+    74                                                                 message = json.loads(line)
+    75                                                             except json.JSONDecodeError:
+    76                                                                 continue
+    77
+    78                                                             msg_type = message.get("type")
+    79                                                             if msg_type == "start":
+    80                                                                 uid = message.get("uid")
+    81                                                                 start_time = message.get("timestamp")
+    82                                                                 with flights_lock:
+    83                                                                     flights[uid] = {"start_time": start_time, "fuel_sum": 0.0, "count": 0}
+    84                                                                 print(f"Started flight {uid} at {start_time}")
+    85                                                             elif msg_type == "data":
+    86                                                                 if uid is None:
+    87                                                                     continue
+    88                                                                 fuel = message.get("fuel")
+    89                                                                 with flights_lock:
+    90                                                                     if uid in flights:
+    91                                                                         flights[uid]["fuel_sum"] += fuel
+    92                                                                         flights[uid]["count"] += 1
+    93                                                                         running_avg = flights[uid]["fuel_sum"] / flights[uid]["count"]
+    94                                                                         print(f"Flight {uid}: Received fuel {fuel}. Running average: {running_avg:.2f}")
+    95                                                             elif msg_type == "end":
+    96                                                                 if uid is None:
+    97                                                                     continue
+    98                                                                 end_time = message.get("timestamp")
+    99                                                                 with flights_lock:
+   100                                                                     record = flights.pop(uid, None)
+   101                                                                 if record and record["count"] > 0:
+   102                                                                     final_avg = record["fuel_sum"] / record["count"]
+   103                                                                 else:
+   104                                                                     final_avg = 0.0
+   105                                                                 print(f"Flight {uid} ended at {end_time}. Final average fuel: {final_avg:.2f}")
+   106                                                                 save_flight_record(uid, start_time, end_time, final_avg, record["count"] if record else 0)
+   107                                                 except ConnectionResetError:
+   108                                                     print(f"ConnectionResetError from {addr}")
+   109                                                 finally:
+   110                                                     if uid is not None:
+   111                                                         with flights_lock:
+   112                                                             record = flights.pop(uid, None)
+   113                                                         if record:
+   114                                                             final_avg = record["fuel_sum"] / record["count"] if record["count"] > 0 else 0.0
+   115                                                             end_time = time.strftime("%H:%M:%S")
+   116                                                             print(f"Connection for flight {uid} closed unexpectedly at {end_time}. Final average fuel: {final_avg:.2f}")
+   117                                                             save_flight_record(uid, record["start_time"], end_time, final_avg, record["count"])
+   118                                                     conn.close()
+   119                                                     print(f"Connection from {addr} closed")
+   120
+   121                                             # 🔍 Performance monitoring with psutil
+   122     27.2 MiB      0.0 MiB           1       def monitor_performance(interval=1):
+   123                                                 process = psutil.Process(os.getpid())
+   124                                                 while True:
+   125                                                     cpu = process.cpu_percent()
+   126                                                     mem = process.memory_info().rss / 1024 ** 2
+   127                                                     print(f"[PERF] CPU: {cpu:.2f}% | RAM: {mem:.2f} MB")
+   128                                                     time.sleep(interval)
+   129
+   130     27.2 MiB      0.0 MiB           2       def start_server():
+   131     27.9 MiB      0.0 MiB           1           init_db()
+   132     27.9 MiB      0.0 MiB           1           server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+   133     27.9 MiB      0.0 MiB           1           server.bind((SERVER_IP, SERVER_PORT))
+   134     27.9 MiB      0.0 MiB           1           server.listen(5)
+   135     27.9 MiB      0.0 MiB           1           print(f"Server listening on {SERVER_IP}:{SERVER_PORT}")
+   136
+   137                                                 # Start performance monitor in a background thread
+   138     28.0 MiB      0.0 MiB           1           threading.Thread(target=monitor_performance, daemon=True).start()
+   139
+   140     28.0 MiB      0.0 MiB           1           try:
+   141     30.5 MiB      0.0 MiB          51               while True:
+   142     30.5 MiB      0.5 MiB          51                   conn, addr = server.accept()
+   143     30.5 MiB      0.2 MiB          50                   client_thread = threading.Thread(target=process_client, args=(conn, addr))
+   144     30.5 MiB      0.0 MiB          50                   client_thread.daemon = True
+   145     30.5 MiB      1.9 MiB          50                   client_thread.start()
+   146     30.5 MiB      0.0 MiB           1           except KeyboardInterrupt:
+   147     30.5 MiB      0.0 MiB           1               print("Server shutting down...")
+   148     30.5 MiB      0.0 MiB           1               return  # Exit main function on Ctrl+C
+   149
+   150                                             # Start the server
+   151     30.5 MiB      0.0 MiB           1       start_server()
